@@ -20,7 +20,6 @@ unsigned int gcd(unsigned int a, unsigned int b) {
 unsigned long long exp(unsigned long long base, unsigned long long exponent, unsigned long long mod) {
     unsigned long long result = 1;
     base = base % mod;
-
     while (exponent > 0) {
         if (exponent % 2 == 1)
             result = (result * base) % mod;
@@ -42,7 +41,7 @@ int main(int argc, char* argv[]) {
 
     if (rank == 0) {
         if (argc != 2) {
-            cout << "Usage: mpirun -np <num_procs> ./<executable> <input_file>\n";
+            cout << "Usage: mpirun -np <num_procs> ./" << argv[0] << " <input_file>\n";
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
@@ -81,7 +80,7 @@ int main(int argc, char* argv[]) {
         cout << "E: " << iE << "\nN: " << iN << endl;
     }
 
-    // Broadcast keys and message size
+    // Broadcast keys and message size to all processes.
     MPI_Bcast(&iP, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
     MPI_Bcast(&iQ, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
     MPI_Bcast(&iE, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
@@ -97,27 +96,28 @@ int main(int argc, char* argv[]) {
 
     MPI_Bcast(message.data(), messageSize, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
 
-    // Allocate local buffers
+    // Allocate local buffers.
     vector<unsigned long long> localEncrypted(messageSize, 0);
     vector<unsigned int> localDecrypted(messageSize, 0);
 
     auto start_enc = high_resolution_clock::now();
 
+    // Each process encrypts part of the message.
     for (int i = rank; i < messageSize; i += size) {
         localEncrypted[i] = exp(message[i], iE, iN);
     }
 
     auto end_enc = high_resolution_clock::now();
 
-    // Gather all encrypted results to root manually
+    // Use MPI_Reduce to gather encrypted values on root.
     vector<unsigned long long> encryptedMessage;
     if (rank == 0)
         encryptedMessage.resize(messageSize);
 
-    MPI_Reduce(localEncrypted.data(), encryptedMessage.data(), messageSize, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(localEncrypted.data(), encryptedMessage.data(),
+               messageSize, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
     int64_t encryption_time = 0;
-
     if (rank == 0) {
         encryption_time = duration_cast<microseconds>(end_enc - start_enc).count();
         ofstream fEncrypted("encrypted_output.txt");
@@ -130,19 +130,27 @@ int main(int argc, char* argv[]) {
         cout << "D: " << iD << "\nN: " << iN << endl;
     }
 
+    // Broadcast the complete encrypted message to all processes for decryption.
+    if (rank != 0)
+        encryptedMessage.resize(messageSize);
+    MPI_Bcast(encryptedMessage.data(), messageSize, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+
     auto start_dec = high_resolution_clock::now();
 
+    // Each process decrypts part of the message.
     for (int i = rank; i < messageSize; i += size) {
         localDecrypted[i] = exp(encryptedMessage[i], iD, iN);
     }
 
     auto end_dec = high_resolution_clock::now();
 
+    // Gather the decrypted values on root.
     vector<unsigned int> decryptedMessage;
     if (rank == 0)
         decryptedMessage.resize(messageSize);
 
-    MPI_Reduce(localDecrypted.data(), decryptedMessage.data(), messageSize, MPI_UNSIGNED, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(localDecrypted.data(), decryptedMessage.data(),
+               messageSize, MPI_UNSIGNED, MPI_SUM, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
         auto decryption_time = duration_cast<microseconds>(end_dec - start_dec).count();
